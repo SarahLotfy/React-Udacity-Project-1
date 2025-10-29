@@ -1,6 +1,5 @@
-import React, { Component } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { debounce } from 'throttle-debounce';
 import * as BooksAPI from './BooksAPI';
 import './App.css';
 import BooksList from './BooksList';
@@ -12,54 +11,87 @@ const bookshelves = [
   { key: 'read', name: 'Read' }
 ];
 
-class BooksApp extends Component {
-  state = {
-    myBooks: [],
-    searchBooks: [],
-    error: false
-  };
+const BooksApp = () => {
+  const [myBooks, setMyBooks] = useState([]);
+  const [searchBooks, setSearchBooks] = useState([]);
+  const [error, setError] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
 
-  componentDidMount() {
+  useEffect(() => {
     BooksAPI.getAll()
-      .then(books => this.setState({ myBooks: books }))
-      .catch(err => this.setState({ error: true }));
+      .then(books => setMyBooks(books))
+      .catch(err => {
+        console.error('Error fetching books:', err);
+        setError(true);
+      });
+  }, []);
+
+  const moveBook = useCallback((book, shelf) => {
+    BooksAPI.update(book, shelf)
+      .then(() => {
+        if (shelf === 'none') {
+          setMyBooks(prevBooks => prevBooks.filter(b => b.id !== book.id));
+        } else {
+          const updatedBook = { ...book, shelf };
+          setMyBooks(prevBooks => 
+            prevBooks.filter(b => b.id !== book.id).concat(updatedBook)
+          );
+        }
+      })
+      .catch(err => {
+        console.error('Error moving book:', err);
+        setError(true);
+      });
+  }, []);
+
+  const handleSearch = useCallback(async (query) => {
+    setSearchQuery(query);
+    
+    // Clear results if query is empty
+    if (!query.trim()) {
+      setSearchBooks([]);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const books = await BooksAPI.search(query.trim(), 20);
+      
+      if (books.error) {
+        setSearchBooks([]);
+      } else if (Array.isArray(books)) {
+        setSearchBooks(books);
+      } else {
+        setSearchBooks([]);
+      }
+    } catch (error) {
+      console.error('Search error:', error);
+      setSearchBooks([]);
+    } finally {
+      setIsSearching(false);
+    }
+  }, []);
+
+  const resetSearch = useCallback(() => {
+    setSearchBooks([]);
+    setSearchQuery('');
+    setIsSearching(false);
+  }, []);
+
+  if (error) {
+    return (
+      <div className="error-container">
+        <h2>Network Error</h2>
+        <p>Please check your connection and try again later.</p>
+      </div>
+    );
   }
 
-  moveBook = (book, shelf) => {
-    BooksAPI.update(book, shelf).catch(() => this.setState({ error: true }));
-
-    if (shelf === 'none') {
-      this.setState(prevState => ({
-        myBooks: prevState.myBooks.filter(b => b.id !== book.id)
-      }));
-    } else {
-      book.shelf = shelf;
-      this.setState(prevState => ({
-        myBooks: prevState.myBooks.filter(b => b.id !== book.id).concat(book)
-      }));
-    }
-  };
-
-  searchForBooks = debounce(300, false, query => {
-    if (query.length > 0) {
-      BooksAPI.search(query).then(books => {
-        if (books.error) this.setState({ searchBooks: [] });
-        else this.setState({ searchBooks: books });
-      });
-    } else {
-      this.setState({ searchBooks: [] });
-    }
-  });
-
-  resetSearch = () => this.setState({ searchBooks: [] });
-
-  render() {
-    const { myBooks, searchBooks, error } = this.state;
-
-    if (error) return <div>Network error. Please try again later.</div>;
-
-    return (
-      <BrowserRouter>
+  return (
+    <BrowserRouter>
+      <div className="app">
         <Routes>
           <Route
             path="/"
@@ -67,7 +99,7 @@ class BooksApp extends Component {
               <BooksList
                 bookshelves={bookshelves}
                 books={myBooks}
-                onMove={this.moveBook}
+                onMove={moveBook}
               />
             }
           />
@@ -77,16 +109,18 @@ class BooksApp extends Component {
               <BookSearch
                 searchBooks={searchBooks}
                 myBooks={myBooks}
-                onSearch={this.searchForBooks}
-                onMove={this.moveBook}
-                onResetSearch={this.resetSearch}
+                searchQuery={searchQuery}
+                onSearch={handleSearch}
+                onMove={moveBook}
+                onResetSearch={resetSearch}
+                isSearching={isSearching}
               />
             }
           />
         </Routes>
-      </BrowserRouter>
-    );
-  }
-}
+      </div>
+    </BrowserRouter>
+  );
+};
 
 export default BooksApp;
